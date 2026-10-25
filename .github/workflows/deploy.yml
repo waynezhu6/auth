@@ -1,0 +1,81 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # GHCR names must be lowercase. APP is also the app's name on the server:
+  # its path waynezhu.dev/apps/<app>/, its container and its database.
+  APP: ${{ github.event.repository.name }}
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+# The template repo itself has no server to deploy to; only copies of it deploy.
+jobs:
+  deploy:
+    if: ${{ !github.event.repository.is_template }}
+    # The server is arm64, so build on an arm64 runner (free for public repos)
+    # and the image runs there as is.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+      # Lets the deploy step prove to the server which repo it is, so this
+      # repo needs no deploy secrets.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalize names
+        run: |
+          echo "APP=${APP,,}" >> "$GITHUB_ENV"
+          echo "IMAGE_OWNER=${IMAGE_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One image holds the backend and the built frontend.
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: backend/Dockerfile
+          build-args: APP=${{ env.APP }}
+          push: true
+          tags: ghcr.io/${{ env.IMAGE_OWNER }}/${{ env.APP }}-backend:latest
+          # One manifest per push, so each pruned version below is a whole
+          # image rather than a provenance attachment of the current one.
+          provenance: false
+
+      # Every push moves :latest and leaves the previous image untagged.
+      # Keep the newest few for rollbacks and delete the rest.
+      - name: Prune old images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.APP }}-backend
+          package-type: container
+          min-versions-to-keep: 5
+
+      # The server pulls this exact image, starts it, checks /api/health and
+      # publishes the frontend, rolling back if the health check fails. Its
+      # output streams into this step. To give the backend an app secret, add
+      # it as an Actions secret and list it under env, one line each:
+      #   env: |
+      #     RAPIDAPI_KEY=${{ secrets.RAPIDAPI_KEY }}
+      - name: Deploy
+        uses: waynezhu6/infrastructure/actions/deploy@main
+        with:
+          digest: ${{ steps.build.outputs.digest }}

@@ -1,0 +1,15 @@
+# Local Postgres for `npm run dev`. Matches backend/.env.example.
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      # Localhost only: the password is the well-known default.
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    volumes:
+      - postgres_dev:/var/lib/postgresql/data
+
+volumes:
+  postgres_dev:

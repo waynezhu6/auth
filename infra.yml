@@ -1,0 +1,8 @@
+# What this app needs from the server. The deploy sends this file to the
+# server's deployer, which creates whatever is declared and missing before the
+# backend starts, and never removes anything. Settings are listed in
+# infrastructure's README ("The app's infra.yml").
+
+# Its own Postgres database and role; the backend gets DATABASE_URL.
+# Set to false (and drop backend/src/db.ts and migrations) for an app without one.
+postgres: true
