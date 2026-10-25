@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { basename, resolve } from 'path'
 
@@ -14,7 +14,7 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_API_BASE': JSON.stringify(apiBase),
   },
-  plugins: [react()],
+  plugins: [react(), csp()],
   server: {
     proxy: {
       // Caddy strips the prefix in production; do the same in dev.
@@ -25,3 +25,24 @@ export default defineConfig({
     },
   },
 })
+
+// The built page may only run its own scripts and talk to its own origin, so
+// nothing injected into it could reach the passkey or session APIs. Dev
+// skips it: Vite's hot reload needs inline scripts.
+function csp(): Plugin {
+  const policy = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+  ].join('; ')
+  return {
+    name: 'csp',
+    apply: 'build',
+    transformIndexHtml: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head-prepend' }],
+  }
+}
