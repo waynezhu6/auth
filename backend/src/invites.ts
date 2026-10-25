@@ -14,11 +14,12 @@ export interface Invite {
 // A one-time link: a signup invite creates a new account, a recovery link
 // adds a passkey to an existing one (for when all of its passkeys are lost).
 // Made by the CLI on the server (cli.ts), never through the web.
-export async function createInvite(kind: InviteKind, userId: string | null = null): Promise<string> {
+// admin (signup only) makes the new account an admin; only the CLI passes it.
+export async function createInvite(kind: InviteKind, userId: string | null = null, admin = false): Promise<string> {
   const token = newToken();
   await pool.query(
-    `INSERT INTO invites (token_hash, kind, user_id, expires_at) VALUES ($1, $2, $3, now() + $4 * interval '1 millisecond')`,
-    [hashToken(token), kind, userId, INVITE_TTL_MS],
+    `INSERT INTO invites (token_hash, kind, user_id, admin, expires_at) VALUES ($1, $2, $3, $4, now() + $5 * interval '1 millisecond')`,
+    [hashToken(token), kind, userId, admin && kind === "signup", INVITE_TTL_MS],
   );
   return `${ORIGIN}${APP_BASE}invite/${token}`;
 }

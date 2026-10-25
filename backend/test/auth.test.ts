@@ -256,3 +256,109 @@ test("an idle session is extended when used, up to the maximum", async () => {
   ({ rows } = await pool.query(`SELECT expires_at < now() + interval '2 days' AS capped FROM sessions WHERE user_id = ${user}`));
   assert.equal(rows[0].capped, true);
 });
+
+test("signing in again replaces the browser's old session", async () => {
+  const passkey = new SoftAuthenticator(ORIGIN, RP_ID);
+  const browser = new Browser();
+  await browser.signUp(await inviteToken(), "twice", passkey);
+  const first = browser.cookie;
+  await browser.signIn(passkey);
+  assert.notEqual(browser.cookie, first);
+  assert.equal((await fetch(`${base}/api/verify`, { headers: { Cookie: first } })).status, 401);
+  const { rows } = await pool.query(`SELECT count(*)::int AS n FROM sessions WHERE user_id = (SELECT id FROM users WHERE name = 'twice')`);
+  assert.equal(rows[0].n, 1);
+});
+
+// An admin, made the way the server's CLI does it.
+async function adminBrowser(name: string) {
+  const passkey = new SoftAuthenticator(ORIGIN, RP_ID);
+  const browser = new Browser();
+  const link = await createInvite("signup", null, true);
+  const res = await browser.signUp(link.split("/invite/")[1], name, passkey);
+  assert.equal(res.status, 200);
+  return { browser, passkey };
+}
+
+test("only admins reach the admin API, and only the CLI makes admins", async () => {
+  const { browser } = await adminBrowser("boss");
+  assert.equal((await browser.call("GET", "/me")).body.user.admin, true);
+  assert.equal((await browser.call("GET", "/admin/users")).status, 200);
+  // What apps see doesn't change.
+  assert.deepEqual(Object.keys((await browser.call("GET", "/verify")).body).sort(), ["id", "name"]);
+
+  const user = new Browser();
+  await user.signUp(await inviteToken(), "plain", new SoftAuthenticator(ORIGIN, RP_ID));
+  assert.equal((await user.call("GET", "/me")).body.user.admin, false);
+  assert.equal((await user.call("GET", "/admin/users")).status, 403);
+  assert.equal((await user.call("POST", "/admin/invites", { kind: "signup" })).status, 403);
+  assert.equal((await new Browser().call("GET", "/admin/users")).status, 401);
+
+  // Invites made from the web never make admins.
+  const link = (await browser.call("POST", "/admin/invites", { kind: "signup", admin: true })).body.link;
+  const invited = new Browser();
+  await invited.signUp(link.split("/invite/")[1], "invited", new SoftAuthenticator(ORIGIN, RP_ID));
+  assert.equal((await invited.call("GET", "/me")).body.user.admin, false);
+});
+
+test("admins see every account and its activity", async () => {
+  const { browser } = await adminBrowser("watcher");
+  const res = await browser.call("GET", "/admin/users");
+  const me = res.body.users.find((u: { name: string }) => u.name === "watcher");
+  assert.equal(me.admin, true);
+  assert.equal(me.passkeys, 1);
+  assert.equal(me.sessions, 1);
+  assert.ok(me.lastSeenAt);
+});
+
+test("admin actions need a recent passkey", async () => {
+  const { browser, passkey } = await adminBrowser("stale");
+  await pool.query(`UPDATE sessions SET verified_at = now() - interval '16 minutes' WHERE user_id = (SELECT id FROM users WHERE name = 'stale')`);
+  assert.equal((await browser.call("GET", "/admin/users")).status, 200);
+  const refused = await browser.call("POST", "/admin/invites", { kind: "signup" });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.reauth, true);
+
+  await browser.signIn(passkey);
+  const link = await browser.call("POST", "/admin/invites", { kind: "signup" });
+  assert.equal(link.status, 200);
+  assert.match(link.body.link, new RegExp(`^${ORIGIN}/apps/\\w+/invite/[\\w-]{43}$`));
+});
+
+test("admins make and withdraw invite and recovery links", async () => {
+  const { browser } = await adminBrowser("inviter");
+  const signup = (await browser.call("POST", "/admin/invites", { kind: "signup" })).body.link;
+  const target = new Browser();
+  const created = await target.signUp(signup.split("/invite/")[1], "target", new SoftAuthenticator(ORIGIN, RP_ID));
+
+  const recovery = await browser.call("POST", "/admin/invites", { kind: "recovery", userId: created.body.user.id });
+  const token = recovery.body.link.split("/invite/")[1];
+  assert.deepEqual((await new Browser().call("GET", `/invites/${token}`)).body, { kind: "recovery", name: "target" });
+  assert.equal((await browser.call("POST", "/admin/invites", { kind: "recovery", userId: "00000000-0000-0000-0000-000000000000" })).status, 404);
+  assert.equal((await browser.call("POST", "/admin/invites", { kind: "bogus" })).status, 400);
+
+  const pending = (await browser.call("GET", "/admin/invites")).body.invites;
+  const listed = pending.find((i: { userName: string }) => i.userName === "target");
+  assert.equal(listed.kind, "recovery");
+  assert.equal((await browser.call("DELETE", `/admin/invites/${listed.id}`)).status, 200);
+  assert.equal((await new Browser().call("GET", `/invites/${token}`)).status, 410);
+});
+
+test("admins sign accounts out and delete them, but not admins", async () => {
+  const { browser } = await adminBrowser("janitor");
+  const victim = new Browser();
+  const passkey = new SoftAuthenticator(ORIGIN, RP_ID);
+  const { body } = await victim.signUp(await inviteToken(), "victim", passkey);
+
+  assert.equal((await browser.call("POST", `/admin/users/${body.user.id}/logout`)).status, 200);
+  assert.equal((await victim.call("GET", "/verify")).status, 401);
+
+  assert.equal((await browser.call("DELETE", `/admin/users/${body.user.id}`)).status, 200);
+  assert.equal((await new Browser().signIn(passkey)).status, 401);
+  assert.equal((await browser.call("DELETE", `/admin/users/${body.user.id}`)).status, 404);
+
+  const me = (await browser.call("GET", "/me")).body.user;
+  assert.equal((await browser.call("DELETE", `/admin/users/${me.id}`)).status, 409);
+  const other = await adminBrowser("otherboss");
+  const otherId = (await other.browser.call("GET", "/me")).body.user.id;
+  assert.equal((await browser.call("DELETE", `/admin/users/${otherId}`)).status, 409);
+});

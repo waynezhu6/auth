@@ -9,6 +9,13 @@ export interface User {
   name: string;
 }
 
+// What this service knows about a signed-in user beyond what apps see.
+export interface SignedIn extends User {
+  admin: boolean;
+  // When this session last proved itself with a passkey.
+  verifiedAt: Date;
+}
+
 // The browser keeps the cookie for as long as it allows (400 days in Chrome);
 // the database decides when the session really ends.
 const COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
@@ -16,7 +23,10 @@ const COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
 // a session on every request don't each cause a write.
 const TOUCH_EVERY_MS = 60 * 60 * 1000;
 
-export async function startSession(db: pg.Pool | pg.PoolClient, res: Response, userId: string): Promise<void> {
+// Signs in, replacing the browser's previous session if it had one.
+export async function startSession(db: pg.Pool | pg.PoolClient, req: Request, res: Response, userId: string): Promise<void> {
+  const old = sessionToken(req);
+  if (old) await db.query(`DELETE FROM sessions WHERE token_hash = $1`, [hashToken(old)]);
   const token = newToken();
   await db.query(
     `INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + $3 * interval '1 millisecond')`,
@@ -34,12 +44,12 @@ export function sessionToken(req: Request): string | undefined {
 }
 
 // The signed-in user, or null. Keeps the session alive while it's used.
-export async function currentUser(req: Request): Promise<User | null> {
+export async function currentUser(req: Request): Promise<SignedIn | null> {
   const token = sessionToken(req);
   if (!token) return null;
   const hash = hashToken(token);
   const { rows } = await pool.query(
-    `SELECT u.id, u.name, s.last_seen_at < now() - $2 * interval '1 millisecond' AS stale
+    `SELECT u.id, u.name, u.admin, s.verified_at, s.last_seen_at < now() - $2 * interval '1 millisecond' AS stale
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > now()`,
     [hash, TOUCH_EVERY_MS],
@@ -53,7 +63,7 @@ export async function currentUser(req: Request): Promise<User | null> {
       [hash, SESSION_MAX_MS, SESSION_IDLE_MS],
     );
   }
-  return { id: rows[0].id, name: rows[0].name };
+  return { id: rows[0].id, name: rows[0].name, admin: rows[0].admin, verifiedAt: rows[0].verified_at };
 }
 
 export async function endSession(req: Request, res: Response, everywhere: boolean): Promise<void> {

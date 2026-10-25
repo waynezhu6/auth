@@ -8,6 +8,7 @@ Passkey sign-in for every app at `waynezhu.dev`. Pages are at `/apps/auth/`. The
 - The database keeps only SHA-256 hashes of session tokens and invite links (`tokens.ts`). Challenges are used once (`challenges.ts`) and expire after 5 minutes.
 - Every non-GET request must carry `Origin: AUTH_ORIGIN` (`app.ts`). Keep it that way, and don't add CORS. Passkey and invite endpoints are rate-limited per IP, using the `X-Real-IP` header that Caddy sets.
 - The session cookie is `__Host-auth` with `path=/`. This deliberately differs from other apps, whose cookies use `API_BASE`: it lets every app's backend see who is signed in. Keep it HttpOnly, Secure and SameSite=Lax.
+- Admin is set only by `cli.js` on the server (`admin`, `unadmin`, `invite --admin`). No route may grant it, remove it or delete an admin. Admin routes (`admin.ts`) that change something also need the session's passkey to have been used in the last 15 minutes (`verified_at`).
 - `RP_ID` (`waynezhu.dev`) can't change without breaking every passkey.
 - `GET /api/verify` (`{id, name}` or 401) is the contract with other apps. Change it only in ways that stay compatible.
 - The built page has a strict CSP (`vite.config.ts`). Keep scripts and styles in files; inline ones won't run.

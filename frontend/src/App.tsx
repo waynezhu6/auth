@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser'
+import { Admin } from './Admin'
+import { Card, date } from './ui'
 import { call, Cancelled, createPasskey, HttpError, nextPage, signIn, type Passkey, type User } from './passkeys'
 
-// One page, three views: an invite link (/apps/auth/invite/<token>), the
-// sign-in button, or the signed-in account.
+// One page, a few views: an invite link (/apps/auth/invite/<token>), the
+// admin page (/apps/auth/admin), the sign-in button, or the signed-in account.
 function App() {
-  const invite = location.pathname.slice(import.meta.env.BASE_URL.length).match(/^invite\/([\w-]+)$/)?.[1]
+  const path = location.pathname.slice(import.meta.env.BASE_URL.length)
+  const invite = path.match(/^invite\/([\w-]+)$/)?.[1]
 
   if (!browserSupportsWebAuthn()) {
     return (
@@ -14,7 +17,9 @@ function App() {
       </Card>
     )
   }
-  return invite ? <Invite token={invite} /> : <Home />
+  if (invite) return <Invite token={invite} />
+  if (path === 'admin') return <Admin />
+  return <Home />
 }
 
 function Home() {
@@ -168,6 +173,11 @@ function Account({ user, passkeys, reload }: { user: User; passkeys: Passkey[]; 
   return (
     <Card title={`Signed in as ${user.name}`}>
       <p className="muted">This account signs you in to every app on waynezhu.dev.</p>
+      {user.admin && (
+        <p>
+          <a href={`${import.meta.env.BASE_URL}admin`}>Admin</a>
+        </p>
+      )}
       <h2>Passkeys</h2>
       <ul className="passkeys">
         {passkeys.map((p) => (
@@ -197,19 +207,6 @@ function Account({ user, passkeys, reload }: { user: User; passkeys: Passkey[]; 
       </div>
     </Card>
   )
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <main>
-      <h1>{title}</h1>
-      {children}
-    </main>
-  )
-}
-
-function date(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 export default App

@@ -24,7 +24,7 @@ account.get(
     res.set("Cache-Control", "no-store");
     const user = await currentUser(req);
     if (!user) throw new HttpError(401, "Not signed in");
-    res.json(user);
+    res.json({ id: user.id, name: user.name });
   }),
 );
 
@@ -39,7 +39,7 @@ account.get(
          FROM passkeys WHERE user_id = $1 ORDER BY created_at`,
       [user.id],
     );
-    res.json({ user, passkeys: rows });
+    res.json({ user: { id: user.id, name: user.name, admin: user.admin }, passkeys: rows });
   }),
 );
 
