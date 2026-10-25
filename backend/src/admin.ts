@@ -1,5 +1,6 @@
 import { Router, type Request } from "express";
 import pool from "./db.js";
+import { APP_NAME, createApiKey } from "./apikeys.js";
 import { ADMIN_FRESH_MS } from "./config.js";
 import { HttpError, wrap } from "./errors.js";
 import { createInvite } from "./invites.js";
@@ -17,6 +18,10 @@ import { currentUser, type SignedIn } from "./sessions.js";
 //   DELETE /api/admin/invites/:id          withdraw one
 //   POST   /api/admin/users/:id/logout     end all of an account's sessions
 //   DELETE /api/admin/users/:id            delete an account (not an admin's)
+//   GET    /api/admin/keys                 every API key, without the key
+//   POST   /api/admin/keys                 {app, name, expiresInDays?}: a new
+//                                          key, yours, shown only this once
+//   DELETE /api/admin/keys/:id             revoke one
 export const admin = Router();
 
 async function requireAdmin(req: Request, fresh: boolean): Promise<SignedIn> {
@@ -109,6 +114,41 @@ admin.delete(
     if (rows[0].admin) throw new HttpError(409, "Admins can't be deleted here. Run `cli.js unadmin <name>` on the server first.");
     // Passkeys, sessions and recovery links go with it (ON DELETE CASCADE).
     await pool.query(`DELETE FROM users WHERE id::text = $1`, [req.params.id]);
+    res.json({ ok: true });
+  }),
+);
+
+admin.get(
+  "/admin/keys",
+  wrap(async (req, res) => {
+    await requireAdmin(req, false);
+    const { rows } = await pool.query(`
+      SELECT k.id, k.prefix, k.app, k.name, u.name AS "userName", k.created_at AS "createdAt",
+             k.last_used_at AS "lastUsedAt", k.expires_at AS "expiresAt"
+        FROM api_keys k JOIN users u ON u.id = k.user_id ORDER BY k.app, k.created_at`);
+    res.json({ keys: rows });
+  }),
+);
+
+admin.post(
+  "/admin/keys",
+  wrap(async (req, res) => {
+    const user = await requireAdmin(req, true);
+    const { app, name, expiresInDays } = req.body ?? {};
+    if (typeof app !== "string" || !APP_NAME.test(app)) throw new HttpError(400, "App names are lowercase letters, digits and dashes.");
+    if (typeof name !== "string" || !name.trim() || name.length > 64) throw new HttpError(400, "Give the key a name, up to 64 characters.");
+    const days = expiresInDays ?? null;
+    if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= 3650)) throw new HttpError(400, "Expiry is a whole number of days, 1 to 3650.");
+    res.json({ key: await createApiKey(user.id, app, name.trim(), days) });
+  }),
+);
+
+admin.delete(
+  "/admin/keys/:id",
+  wrap(async (req, res) => {
+    await requireAdmin(req, true);
+    const { rowCount } = await pool.query(`DELETE FROM api_keys WHERE id::text = $1`, [req.params.id]);
+    if (!rowCount) throw new HttpError(404, "No such key.");
     res.json({ ok: true });
   }),
 );

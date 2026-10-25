@@ -1,6 +1,7 @@
 import { Router } from "express";
 import pool from "./db.js";
 import { HttpError, wrap } from "./errors.js";
+import { bearerKey, keyUser } from "./apikeys.js";
 import { findInvite } from "./invites.js";
 import { currentUser, endSession } from "./sessions.js";
 import { passkeyName } from "./passkeys.js";
@@ -10,7 +11,11 @@ import { passkeyName } from "./passkeys.js";
 //   GET    /api/verify            {id, name} of the signed-in user, or 401.
 //                                 Other apps' backends call this over the
 //                                 server's internal network with the
-//                                 browser's Cookie header (README).
+//                                 browser's Cookie header (README). With
+//                                 an API key instead (Authorization: Bearer
+//                                 and ?app=<the asking app>), it answers
+//                                 {id, name, key} of the key's owner if
+//                                 the key is for that app, or 401.
 //   GET    /api/me                {user, passkeys}, or 401
 //   POST   /api/logout            {everywhere?}: this session, or all of them
 //   PATCH  /api/passkeys/:id      {name}: rename one
@@ -22,6 +27,14 @@ account.get(
   "/verify",
   wrap(async (req, res) => {
     res.set("Cache-Control", "no-store");
+    // A request carrying a key is judged on the key alone, never the cookie.
+    const key = bearerKey(req);
+    if (key) {
+      const owner = await keyUser(key, req.query.app);
+      if (!owner) throw new HttpError(401, "Invalid API key");
+      res.json(owner);
+      return;
+    }
     const user = await currentUser(req);
     if (!user) throw new HttpError(401, "Not signed in");
     res.json({ id: user.id, name: user.name });
