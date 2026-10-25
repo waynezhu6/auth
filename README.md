@@ -1,59 +1,91 @@
-# app-template
+# auth
 
-Starter template for a full-stack app on my personal VPS. React + Vite frontend, Express + Node backend, PostgreSQL, deployed via GitHub Actions.
+Passkey sign-in for every app on waynezhu.dev. You get one account, and it signs you in to all of them. It has no passwords: signing in is Face ID, a fingerprint or a device PIN, through a passkey your phone or laptop keeps.
 
-## Stack
+- **Login and account page:** `waynezhu.dev/apps/auth/`. Here you sign in, add, rename or remove passkeys, and sign out on this device or everywhere.
+- **For other apps:** their backends ask `http://auth-backend:3001/api/verify` who is signed in (see "Using it from an app").
 
-- **Frontend**: React 19, Vite, TypeScript
-- **Backend**: Express, TypeScript, PostgreSQL (`node-pg-migrate`)
-- **Infra**: Docker, Caddy (via [infrastructure](https://github.com/waynezhu6/infrastructure)), GHCR
+Accounts are invite-only. An invite is a one-time link made on the server.
 
-## Using this template
+## First account
 
-**1. Create a new repo from this template** on GitHub. The repo name becomes the app name everywhere: the container `<name>-backend`, the image `ghcr.io/<owner>/<name>-backend`, the frontend folder `sites/<name>` and the database. Nothing in the files needs renaming. Use lowercase letters, digits and dashes.
+After the first deploy, on the server:
 
-**2. Register the app** in the [infrastructure](https://github.com/waynezhu6/infrastructure) repo: Actions → Register app, with the repo name. Merge the PR it opens. That lets the app deploy and serves it at `/apps/<name>/` (frontend) and `/api/<name>/` (backend) on the server's domain; see "Adding a New Project" there, which also covers app-specific secrets.
+```bash
+docker exec $(docker ps -q --filter label=deployer.app=auth | head -n1) node dist/cli.js invite
+```
 
-**What the app gets from the server** is declared in `infra.yml` at the repo root, sent with every deploy. It starts as `postgres: true`: the first deploy creates the app's database and the backend gets `DATABASE_URL`. The server creates what's declared and missing, never removes anything, and refuses unknown settings; the settings are listed in infrastructure's README.
+This prints a link like `https://waynezhu.dev/apps/auth/invite/…`. Open it on your phone, pick a username and create the passkey.
 
-**3. Push to `main`.** No deploy secrets are needed. CI builds one image with the backend and the built frontend, pushes it to GHCR, and asks the server's deployer to run it (infrastructure's `actions/deploy`). The deploy step proves which repo it is with a GitHub OIDC token, so the server only lets this repo deploy this app. Its output, including the backend's health check, streams into the Actions log, and a failed health check rolls back to the previous version. `DATABASE_URL` comes from the server (with `postgres: true` in `infra.yml`). App secrets (API keys) go in this repo's Actions secrets (Settings → Secrets and variables → Actions), each listed as a `NAME=${{ secrets.NAME }}` line under `env` in the Deploy step of `.github/workflows/deploy.yml`; the backend gets it as the environment variable `NAME`. They must be single-line, and `DATABASE_URL`, `NODE_ENV` and `PORT` are reserved; the deploy fails with a clear message if the app isn't registered yet.
+If your passkeys sync (iCloud Keychain, Google Password Manager, 1Password), they reach your other devices on their own. Otherwise, add one on each device from the account page. A device without a passkey can still sign in by scanning a QR code with your phone.
 
-This template repo itself doesn't deploy (the job skips when the repo is a template).
+The same command takes these (the `docker ps` part finds the container, whose name changes with each deploy):
+
+| Command | Does |
+|---|---|
+| `invite` | A link that creates one new account. It works once, within 7 days. |
+| `recover wayne` | A link that adds a passkey to `wayne`'s account, for when every passkey is lost. Old passkeys keep working until you remove them. |
+| `users` | Lists accounts and how many passkeys each has. |
+
+## Using it from an app
+
+App backends run on the same Docker network as this one, so they can ask it directly, passing along the browser's cookies:
+
+```ts
+const res = await fetch("http://auth-backend:3001/api/verify", {
+  headers: { cookie: req.headers.cookie ?? "" },
+});
+const user = res.ok ? ((await res.json()) as { id: string; name: string }) : null;
+```
+
+If there's no user, send the browser to `/apps/auth/?next=<the page it was on>`. After signing in, it comes straight back. `next` must be a path on waynezhu.dev; anything else is ignored.
+
+Key your data on `user.id`, not the name. A cleaner helper for this will live in app-template.
+
+## How it works
+
+- **Passkeys.** A passkey is a key pair. The device keeps the private key and only uses it after Face ID, a fingerprint or the PIN. This service stores the public key. Signing in means the device signs a random one-time challenge from the server. Passkeys are tied to `waynezhu.dev`, so a look-alike site can't use them. The service uses [SimpleWebAuthn](https://simplewebauthn.dev).
+- **Sessions.** Signing in sets the cookie `__Host-auth`: HttpOnly, Secure, SameSite=Lax, for the whole site. Unlike other apps' cookies, it is sent to every app's backend, which is how they can check it. That also means every app on the domain is trusted with it. A session ends after 30 days unused, after a year in any case, or on sign-out. "Sign out everywhere" ends all of an account's sessions.
+- **What's stored.** The database holds accounts, passkeys' public keys, and hashes of session tokens and invite links. A leaked copy can't be used to sign in. The nightly backups cover it like every other database.
+- **Guards.**
+  - Every request that changes something must come from the login page itself (its `Origin` header).
+  - Sign-in, sign-up and invite checks are limited to 30 a minute per IP.
+  - Challenges work once, for 5 minutes.
+  - The page runs only its own scripts (a Content-Security-Policy).
+  - An account's last passkey can't be removed.
+
+### API
+
+Express sees these as `/api/...`. Browsers reach them under `/api/auth/...`.
+
+| Route | |
+|---|---|
+| `GET /api/verify` | `{id, name}` of the signed-in user, or 401. This is for other apps. |
+| `GET /api/me` | `{user, passkeys}`, or 401 |
+| `POST /api/login/options`, `/api/login/verify` | Sign in with a passkey |
+| `POST /api/register/options`, `/api/register/verify` | Create a passkey: with a signup invite and a username for a new account, with a recovery invite, or for the signed-in account |
+| `POST /api/logout` | `{everywhere?: true}` |
+| `PATCH /api/passkeys/:id`, `DELETE /api/passkeys/:id` | Rename or remove a passkey |
+| `GET /api/invites/:token` | Whether an invite link is still good |
 
 ## Local dev
 
 ```bash
 npm install
 docker compose -f docker-compose.dev.yml up -d   # local Postgres on 5432
-cp backend/.env.example backend/.env
-npm run dev                                      # http://localhost:5173/apps/<name>/, backend on 3001
+cp backend/.env.example backend/.env             # points passkeys at http://localhost:5173
+npm run dev
+cd backend && npx tsx --env-file=.env src/cli.ts invite
 ```
 
-Dev uses the production paths: the frontend is at `/apps/<name>/` and proxies `/api/<name>/...` to the backend as `/api/...`, as Caddy does. `<name>` is the checkout's folder name locally and the repo name in CI.
-
-## Paths
-
-The app is served under a prefix, so never hardcode `/` or `/api` URLs:
-
-- Frontend: call the backend with `api('/things')` or `apiUrl('/things')` from `frontend/src/api.ts`. Assets and imports are handled by Vite's `base`.
-- Backend: routes stay under `/api/*` (Caddy strips the prefix). For URLs the backend sends to the browser (redirects, links, cookie paths), use `API_BASE` and `APP_BASE` from `backend/src/paths.ts`. Set cookies with `path: API_BASE` so they only go to this app's backend; all apps share one domain.
-
-## Database migrations
+Open the link it prints. Chrome, Edge and Firefox allow passkeys on `localhost`. Chrome's DevTools can also stand in for a phone: **More tools → WebAuthn → Enable virtual authenticator environment**.
 
 ```bash
-cd backend
-
-# Migrations are ES modules (.js) in backend/migrations
-# Create a new migration
-npm run migrate:create -- my-migration-name
-
-# Apply / roll back
-npm run migrate:up
-npm run migrate:down
+npm test --workspace=backend    # needs the dev Postgres; makes and drops its own database
 ```
 
-The `migrate:*` commands read `DATABASE_URL` from your shell, e.g. `export $(cat .env)` first.
+The tests drive real passkey ceremonies with a software authenticator (`backend/test/authenticator.ts`). CI runs them, and builds the image, on every PR.
 
-Migrations run automatically on backend startup, before it takes requests. If one fails the backend exits, so the deploy fails its health check and the previous version keeps serving.
+## Deploying
 
-Deploys don't stop the app: the new version starts and migrates while the old one still serves, then takes over. So a migration must leave the schema usable by the previous version: add tables and columns freely, but drop or rename one only in a later deploy, once no shipped code uses it.
+Like any app from [app-template](https://github.com/waynezhu6/app-template): it's registered in infrastructure (`apps/auth.caddy`), `infra.yml` gives it its database, and a push to `main` deploys it. It needs no secrets.

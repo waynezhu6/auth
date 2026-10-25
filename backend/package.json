@@ -9,16 +9,17 @@
     "start": "node dist/index.js",
     "migrate:up": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
-    "migrate:create": "node-pg-migrate create"
+    "migrate:create": "node-pg-migrate create",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test"
   },
   "dependencies": {
-    "cors": "^2.8.5",
+    "@simplewebauthn/server": "^13.3.3",
     "express": "^4.19.2",
     "node-pg-migrate": "^8.0.4",
     "pg": "^8.11.3"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/pg": "^8.10.9",
     "tsx": "^4.15.7",
