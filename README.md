@@ -12,7 +12,7 @@ Accounts are invite-only. An invite is a one-time link made on the server.
 After the first deploy, on the server:
 
 ```bash
-docker exec $(docker ps -q --filter label=deployer.app=auth | head -n1) node dist/cli.js invite
+docker exec $(docker ps -q --filter label=deployer.app=auth | head -n1) node dist/cli.js invite --admin
 ```
 
 This prints a link like `https://waynezhu.dev/apps/auth/invite/…`. Open it on your phone, pick a username and create the passkey.
@@ -23,9 +23,23 @@ The same command takes these (the `docker ps` part finds the container, whose na
 
 | Command | Does |
 |---|---|
-| `invite` | A link that creates one new account. It works once, within 7 days. |
+| `invite` | A link that creates one new account. It works once, within 7 days. `invite --admin` makes that account an admin. |
 | `recover wayne` | A link that adds a passkey to `wayne`'s account, for when every passkey is lost. Old passkeys keep working until you remove them. |
+| `admin wayne` / `unadmin wayne` | Make `wayne` an admin, or stop them being one. |
 | `users` | Lists accounts and how many passkeys each has. |
+
+## Admin page
+
+Admins get an **Admin** link on their account page, which goes to `/apps/auth/admin`. It lists every account with its passkeys, open sessions and when it was last seen. From there an admin can:
+
+- make invite links and recovery links, so day-to-day you don't need the server
+- withdraw unused links
+- sign an account out everywhere
+- delete an account
+
+Changes need a passkey used in the last 15 minutes; otherwise the page asks for it first.
+
+Only the server's command line can make or remove an admin, never the web, and the admin page can't delete an admin. Anyone who can run commands on the server already controls everything on it, so this adds no new way in.
 
 ## Using it from an app
 
@@ -67,6 +81,7 @@ Express sees these as `/api/...`. Browsers reach them under `/api/auth/...`.
 | `POST /api/logout` | `{everywhere?: true}` |
 | `PATCH /api/passkeys/:id`, `DELETE /api/passkeys/:id` | Rename or remove a passkey |
 | `GET /api/invites/:token` | Whether an invite link is still good |
+| `/api/admin/...` | The admin page's API (`backend/src/admin.ts`), admins only |
 
 ## Local dev
 

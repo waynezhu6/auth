@@ -23,3 +23,7 @@ export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
 // Usernames: what other apps see as the user's name.
 export const USERNAME = /^[a-z0-9][a-z0-9_-]{1,31}$/;
+
+// Admin actions that change something need a passkey used this recently in
+// the session; after that the page asks for one again.
+export const ADMIN_FRESH_MS = 15 * 60 * 1000;

@@ -5,6 +5,8 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    // The action needs a fresh passkey check (admin.ts).
+    public reauth = false,
   ) {
     super(message);
   }
@@ -17,7 +19,7 @@ export function wrap(handler: (req: Request, res: Response) => Promise<unknown>)
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message });
+    res.status(err.status).json({ error: err.message, ...(err.reauth && { reauth: true }) });
     return;
   }
   // body-parser's errors (bad JSON, too large) carry their own status.

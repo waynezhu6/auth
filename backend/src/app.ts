@@ -1,5 +1,6 @@
 import express from "express";
 import { account } from "./account.js";
+import { admin } from "./admin.js";
 import { ORIGIN } from "./config.js";
 import { errorHandler } from "./errors.js";
 import { passkeys } from "./passkeys.js";
@@ -33,6 +34,7 @@ export function createApp({ attemptsPerMinute = 30 } = {}) {
 
   app.use("/api", passkeys);
   app.use("/api", account);
+  app.use("/api", admin);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });

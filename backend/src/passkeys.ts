@@ -7,6 +7,7 @@ import {
   verifyRegistrationResponse,
   type AuthenticatorTransportFuture,
 } from "@simplewebauthn/server";
+import type pg from "pg";
 import pool from "./db.js";
 import { ORIGIN, RP_ID, RP_NAME, USERNAME } from "./config.js";
 import { saveChallenge, takeChallenge, type Flow } from "./challenges.js";
@@ -107,15 +108,20 @@ passkeys.post(
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
+      let used: pg.QueryResult | undefined;
       if (flow.kind !== "add") {
-        const used = await db.query(
-          `UPDATE invites SET used_at = now() WHERE token_hash = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now()`,
+        used = await db.query(
+          `UPDATE invites SET used_at = now() WHERE token_hash = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now() RETURNING admin`,
           [Buffer.from(flow.inviteHash, "hex"), flow.kind],
         );
         if (!used.rowCount) throw new HttpError(410, "This link has expired or was already used. Ask for a new one.");
       }
       if (flow.kind === "signup") {
-        const created = await db.query(`INSERT INTO users (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [flow.userId, flow.name]);
+        const created = await db.query(`INSERT INTO users (id, name, admin) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [
+          flow.userId,
+          flow.name,
+          used!.rows[0].admin,
+        ]);
         if (!created.rowCount) throw new HttpError(409, `The username ${flow.name} is taken.`);
       }
       const added = await db.query(
@@ -124,7 +130,7 @@ passkeys.post(
         [credential.id, flow.userId, Buffer.from(credential.publicKey), credential.counter, credential.transports ?? [], credentialBackedUp, passkeyName(label)],
       );
       if (!added.rowCount) throw new HttpError(409, "This passkey is already registered.");
-      if (flow.kind !== "add") await startSession(db, res, flow.userId);
+      if (flow.kind !== "add") await startSession(db, req, res, flow.userId);
       const { rows } = await db.query(`SELECT id, name FROM users WHERE id = $1`, [flow.userId]);
       await db.query("COMMIT");
       res.json({ user: rows[0] });
@@ -181,7 +187,7 @@ passkeys.post(
 
     const { newCounter, credentialBackedUp } = verification.authenticationInfo;
     await pool.query(`UPDATE passkeys SET counter = $2, synced = $3, last_used_at = now() WHERE id = $1`, [passkey.id, newCounter, credentialBackedUp]);
-    await startSession(pool, res, passkey.user_id);
+    await startSession(pool, req, res, passkey.user_id);
     const user = await pool.query(`SELECT id, name FROM users WHERE id = $1`, [passkey.user_id]);
     res.json({ user: user.rows[0] });
   }),

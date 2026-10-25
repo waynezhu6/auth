@@ -4,6 +4,7 @@ import { api } from './api'
 export interface User {
   id: string
   name: string
+  admin?: boolean
 }
 
 export interface Passkey {
@@ -23,15 +24,18 @@ export async function call<T>(method: string, path: string, body?: unknown): Pro
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new HttpError(res.status, data.error ?? 'Something went wrong. Try again.')
+  if (!res.ok) throw new HttpError(res.status, data.error ?? 'Something went wrong. Try again.', data.reauth === true)
   return data as T
 }
 
 export class HttpError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // The server wants a fresh passkey check first (admin actions).
+  reauth: boolean
+  constructor(status: number, message: string, reauth = false) {
     super(message)
     this.status = status
+    this.reauth = reauth
   }
 }
 
