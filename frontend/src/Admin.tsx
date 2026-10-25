@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { call, Cancelled, HttpError, signIn } from './passkeys'
 import { Card, date } from './ui'
 
@@ -21,21 +21,34 @@ interface Invite {
   expiresAt: string
 }
 
-// Every account and open invite link, for admins. Being an admin is set on
+interface ApiKey {
+  id: string
+  prefix: string
+  app: string
+  name: string
+  userName: string
+  createdAt: string
+  lastUsedAt: string | null
+  expiresAt: string | null
+}
+
+// Every account, open invite link and API key, for admins. Being an admin is set on
 // the server (cli.ts admin <name>); this page can't grant it.
 export function Admin() {
-  const [data, setData] = useState<{ users: Account[]; invites: Invite[] } | null>(null)
+  const [data, setData] = useState<{ users: Account[]; invites: Invite[]; keys: ApiKey[] } | null>(null)
   const [error, setError] = useState('')
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState(false)
+  const [newKey, setNewKey] = useState('')
 
   const load = useCallback(async () => {
     try {
-      const [{ users }, { invites }] = await Promise.all([
+      const [{ users }, { invites }, { keys }] = await Promise.all([
         call<{ users: Account[] }>('GET', '/admin/users'),
         call<{ invites: Invite[] }>('GET', '/admin/invites'),
+        call<{ keys: ApiKey[] }>('GET', '/admin/keys'),
       ])
-      setData({ users, invites })
+      setData({ users, invites, keys })
     } catch (err) {
       if (err instanceof HttpError && err.status === 401) {
         location.replace(`${import.meta.env.BASE_URL}?next=${encodeURIComponent(location.pathname)}`)
@@ -81,6 +94,17 @@ export function Admin() {
     }
   }
   const withdraw = (i: Invite) => run(() => call('DELETE', `/admin/invites/${i.id}`))
+  const makeKey = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const form = new FormData(e.currentTarget)
+    const days = Number(form.get('days'))
+    const body = { app: form.get('app'), name: form.get('name'), expiresInDays: days > 0 ? days : null }
+    const res = await run(() => call<{ key: string }>('POST', '/admin/keys', body))
+    if (res) setNewKey(res.key)
+  }
+  const revoke = (k: ApiKey) => {
+    if (confirm(`Revoke ${k.name}? Anything using it stops working.`)) run(() => call('DELETE', `/admin/keys/${k.id}`))
+  }
 
   if (!data) return <Card title="Admin">{error && <p className="error">{error}</p>}</Card>
 
@@ -153,6 +177,66 @@ export function Admin() {
                 <td>{date(i.expiresAt)}</td>
                 <td className="cell-actions">
                   <button onClick={() => withdraw(i)} disabled={busy}>Withdraw</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h2>API keys</h2>
+      <p className="muted">
+        A key lets a script or another server act as you, in one app only. Store it in that app's secrets or the
+        caller's; it is shown only once.
+      </p>
+      <form className="key-form" onSubmit={makeKey}>
+        <input name="app" placeholder="App, e.g. txtify" required pattern="[a-z0-9][a-z0-9\-]*" list="apps" />
+        <datalist id="apps">
+          {[...new Set(data.keys.map((k) => k.app))].map((a) => (
+            <option key={a} value={a} />
+          ))}
+        </datalist>
+        <input name="name" placeholder="Name, e.g. iPhone Shortcut" required maxLength={64} />
+        <select name="days" defaultValue="0">
+          <option value="0">Never expires</option>
+          <option value="30">30 days</option>
+          <option value="90">90 days</option>
+          <option value="365">1 year</option>
+        </select>
+        <button disabled={busy}>New key</button>
+      </form>
+      {newKey && (
+        <p className="link">
+          <input readOnly value={newKey} onFocus={(e) => e.target.select()} />
+          <button onClick={() => navigator.clipboard.writeText(newKey)}>Copy</button>
+        </p>
+      )}
+      {data.keys.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>App</th>
+              <th>Name</th>
+              <th>Key</th>
+              <th>Owner</th>
+              <th>Last used</th>
+              <th>Expires</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {data.keys.map((k) => (
+              <tr key={k.id}>
+                <td>{k.app}</td>
+                <td>{k.name}</td>
+                <td>
+                  <code>{k.prefix}…</code>
+                </td>
+                <td>{k.userName}</td>
+                <td>{k.lastUsedAt ? date(k.lastUsedAt) : 'Never'}</td>
+                <td>{k.expiresAt ? date(k.expiresAt) : 'Never'}</td>
+                <td className="cell-actions">
+                  <button onClick={() => revoke(k)} disabled={busy}>Revoke</button>
                 </td>
               </tr>
             ))}

@@ -35,7 +35,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 button.primary { width: 100%; padding: 10px 14px; background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 form { display: grid; gap: 14px; }
 label { display: grid; gap: 4px; font-size: 0.9rem; color: var(--muted); }
-input { font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+input, select { font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .passkeys { list-style: none; padding: 0; margin: 0 0 14px; }
 .passkeys li { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
 .passkeys li > div:first-child { display: grid; min-width: 0; }
@@ -52,3 +52,5 @@ td.cell-actions button { padding: 4px 10px; font-size: 0.85rem; margin-left: 4px
 .wide { overflow-x: auto; }
 .link { display: flex; gap: 8px; }
 .link input { flex: 1; min-width: 0; }
+.key-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.key-form input { flex: 1; min-width: 10em; }

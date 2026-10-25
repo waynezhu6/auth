@@ -36,6 +36,7 @@ Admins get an **Admin** link on their account page, which goes to `/apps/auth/ad
 - withdraw unused links
 - sign an account out everywhere
 - delete an account
+- make and revoke API keys (see "API keys")
 
 Changes need a passkey used in the last 15 minutes; otherwise the page asks for it first.
 
@@ -54,7 +55,26 @@ const user = res.ok ? ((await res.json()) as { id: string; name: string }) : nul
 
 If there's no user, send the browser to `/apps/auth/?next=<the page it was on>`. After signing in, it comes straight back. `next` must be a path on waynezhu.dev; anything else is ignored.
 
-Key your data on `user.id`, not the name. A cleaner helper for this will live in app-template.
+Key your data on `user.id`, not the name. app-template's `backend/src/auth.ts` (`requireUser`, `currentUser`) does all of this, API keys included.
+
+## API keys
+
+For callers that can't sign in with a passkey: a script, a cron job on another machine, an iOS Shortcut. An admin makes one on the admin page, for one app, and copies it once (it isn't shown again). It looks like `wz_txtify_…`. Keep it wherever the caller keeps secrets: the calling repo's Actions secrets, a password manager. Never in a repo's files.
+
+The caller sends it to the app as `Authorization: Bearer wz_…`. The app's backend passes it on, with its own name:
+
+```ts
+const res = await fetch(`http://auth-backend:3001/api/verify?app=${APP}`, {
+  headers: { authorization: req.headers.authorization },
+});
+// 200 {id, name, key}: the key's owner, and the key's name. 401: no good.
+```
+
+- A key acts as the admin who made it, but only in its app: a `txtify` key is refused when `ledger` asks. The app's name comes from the asking backend; apps on the server are trusted with that, as they are with the session cookie.
+- A request with a key is judged on the key alone, even if it also carries a cookie.
+- Keys can expire (30 days to a year) or never. The page shows when each was last used.
+- Revoking deletes the key at once. Deleting an account deletes its keys.
+- Only a hash is stored, like sessions.
 
 ## How it works
 
@@ -74,7 +94,7 @@ Express sees these as `/api/...`. Browsers reach them under `/api/auth/...`.
 
 | Route | |
 |---|---|
-| `GET /api/verify` | `{id, name}` of the signed-in user, or 401. This is for other apps. |
+| `GET /api/verify` | `{id, name}` of the signed-in user, or 401. This is for other apps. With `Authorization: Bearer <key>` and `?app=<app>`: `{id, name, key}` of the key's owner, or 401. |
 | `GET /api/me` | `{user, passkeys}`, or 401 |
 | `POST /api/login/options`, `/api/login/verify` | Sign in with a passkey |
 | `POST /api/register/options`, `/api/register/verify` | Create a passkey: with a signup invite and a username for a new account, with a recovery invite, or for the signed-in account |

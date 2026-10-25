@@ -362,3 +362,61 @@ test("admins sign accounts out and delete them, but not admins", async () => {
   const otherId = (await other.browser.call("GET", "/me")).body.user.id;
   assert.equal((await browser.call("DELETE", `/admin/users/${otherId}`)).status, 409);
 });
+
+// What an app's backend does with a caller's key: pass it on with its own name.
+const verifyKey = async (key: string, app?: string) => {
+  const res = await fetch(`${base}/api/verify${app ? `?app=${app}` : ""}`, { headers: { Authorization: `Bearer ${key}` } });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { status: res.status, body: (await res.json()) as any };
+};
+
+test("admins make API keys that work for one app only", async () => {
+  const { browser } = await adminBrowser("keymaker");
+  const me = (await browser.call("GET", "/me")).body.user;
+  const made = await browser.call("POST", "/admin/keys", { app: "txtify", name: "Shortcut" });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  const key: string = made.body.key;
+  assert.match(key, /^wz_txtify_[\w-]{43}$/);
+
+  assert.deepEqual((await verifyKey(key, "txtify")).body, { id: me.id, name: "keymaker", key: "Shortcut" });
+  assert.equal((await verifyKey(key, "ledger")).status, 401);
+  assert.equal((await verifyKey(key)).status, 400);
+  assert.equal((await verifyKey(key + "x", "txtify")).status, 401);
+
+  // Only the hash is stored, and the list never shows the key.
+  const { rows } = await pool.query(`SELECT * FROM api_keys WHERE name = 'Shortcut'`);
+  assert.ok(!JSON.stringify(rows).includes(key.slice(10)));
+  const listed = (await browser.call("GET", "/admin/keys")).body.keys.find((k: { name: string }) => k.name === "Shortcut");
+  assert.equal(listed.prefix, key.slice(0, 14));
+  assert.equal(listed.userName, "keymaker");
+  assert.ok(listed.lastUsedAt);
+  assert.ok(!JSON.stringify(listed).includes(key.slice(14)));
+
+  // A key is judged alone: a good cookie doesn't rescue a bad key.
+  const res = await fetch(`${base}/api/verify?app=txtify`, { headers: { Authorization: "Bearer nope", Cookie: browser.cookie } });
+  assert.equal(res.status, 401);
+
+  assert.equal((await browser.call("DELETE", `/admin/keys/${listed.id}`)).status, 200);
+  assert.equal((await verifyKey(key, "txtify")).status, 401);
+  assert.equal((await browser.call("DELETE", `/admin/keys/${listed.id}`)).status, 404);
+});
+
+test("API keys expire, and only fresh admins make them", async () => {
+  const { browser } = await adminBrowser("keyexpiry");
+  const { key } = (await browser.call("POST", "/admin/keys", { app: "notes", name: "Soon", expiresInDays: 1 })).body;
+  assert.equal((await verifyKey(key, "notes")).status, 200);
+  await pool.query(`UPDATE api_keys SET expires_at = now() - interval '1 second' WHERE name = 'Soon'`);
+  assert.equal((await verifyKey(key, "notes")).status, 401);
+
+  for (const body of [{ app: "Bad App", name: "x" }, { app: "notes", name: "" }, { app: "notes", name: "x", expiresInDays: 0 }]) {
+    assert.equal((await browser.call("POST", "/admin/keys", body)).status, 400);
+  }
+
+  await pool.query(`UPDATE sessions SET verified_at = now() - interval '16 minutes' WHERE user_id = (SELECT id FROM users WHERE name = 'keyexpiry')`);
+  assert.equal((await browser.call("POST", "/admin/keys", { app: "notes", name: "Late" })).body.reauth, true);
+
+  const user = new Browser();
+  await user.signUp(await inviteToken(), "keyless", new SoftAuthenticator(ORIGIN, RP_ID));
+  assert.equal((await user.call("POST", "/admin/keys", { app: "notes", name: "Mine" })).status, 403);
+  assert.equal((await user.call("GET", "/admin/keys")).status, 403);
+});

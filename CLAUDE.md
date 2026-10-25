@@ -10,7 +10,8 @@ Passkey sign-in for every app at `waynezhu.dev`. Pages are at `/apps/auth/`. The
 - The session cookie is `__Host-auth` with `path=/`. This deliberately differs from other apps, whose cookies use `API_BASE`: it lets every app's backend see who is signed in. Keep it HttpOnly, Secure and SameSite=Lax.
 - Admin is set only by `cli.js` on the server (`admin`, `unadmin`, `invite --admin`). No route may grant it, remove it or delete an admin. Admin routes (`admin.ts`) that change something also need the session's passkey to have been used in the last 15 minutes (`verified_at`).
 - `RP_ID` (`waynezhu.dev`) can't change without breaking every passkey.
-- `GET /api/verify` (`{id, name}` or 401) is the contract with other apps. Change it only in ways that stay compatible.
+- `GET /api/verify` (`{id, name}` or 401) is the contract with other apps. Change it only in ways that stay compatible. With a Bearer API key it also needs `?app=` and answers only for that key's app; a request with a key is never judged on its cookie.
+- API keys (`apikeys.ts`) are made only by admins with a fresh passkey, each for one app, shown once and stored as a hash.
 - The built page has a strict CSP (`vite.config.ts`). Keep scripts and styles in files; inline ones won't run.
 
 ## Conventions
